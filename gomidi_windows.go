@@ -2,7 +2,6 @@ package gomidi
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -11,13 +10,18 @@ import (
 )
 
 type Device struct {
-	name string
-	num  int
+	name    string
+	num     int
+	notesOn map[uint8]bool
 }
 
 func New(name string) (d Device, err error) {
 	d.name, d.num, err = filterName(name)
 	return
+}
+
+func Close() {
+
 }
 
 func (d Device) Open() (err error) {
@@ -39,6 +43,9 @@ func (d Device) Open() (err error) {
 }
 
 func (d Device) Close() (err error) {
+	for note := range d.notesOn {
+		d.NoteOff(0, note)
+	}
 	mutex.Lock()
 	defer mutex.Unlock()
 	if hmo, ok := devicesOpen[d.name]; ok {
@@ -55,8 +62,11 @@ func (d Device) NoteOn(channel, note, velocity uint8) (err error) {
 	if hmo, ok := devicesOpen[d.name]; ok {
 		if sendNoteOn(hmo, channel, note, velocity) != 0 {
 			err = fmt.Errorf("failed to send Note On message")
-			log.Trace(err)
-			return
+			if err != nil {
+				log.Error(err)
+			} else {
+				d.notesOn[note] = true
+			}
 		}
 	}
 	return
@@ -71,8 +81,11 @@ func (d Device) NoteOff(channel, note uint8) (err error) {
 		noteOff |= uint32(0) << 16 // Set velocity to 0 for Note Off
 		if midiOutShortMsg(hmo, noteOff) != 0 {
 			err = fmt.Errorf("failed to send Note Off message")
-			log.Trace(err)
-			return
+			if err != nil {
+				log.Error(err)
+			} else {
+				delete(d.notesOn, note)
+			}
 		}
 	}
 	return
@@ -168,21 +181,4 @@ func Devices() []string {
 		}
 	}
 	return names
-}
-
-func filterName(name string) (foundName string, foundNum int, err error) {
-	name = strings.ToLower(name)
-	names := Devices()
-	for i, n := range names {
-		n = strings.ToLower(n)
-		if strings.Contains(n, name) {
-			foundName = n
-			foundNum = i
-			break
-		}
-	}
-	if foundNum == -1 {
-		err = fmt.Errorf("could not find device with name %s", name)
-	}
-	return
 }
